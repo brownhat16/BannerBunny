@@ -1,40 +1,16 @@
-# Core FastAPI and ASGI server
 fastapi
 uvicorn
 streamlit
 requests
 time
-
-# Async HTTP client
 aiohttp
-
-# Image processing
 Pillow
 base64
-
-# JSON handling
 json
-
-# SSL certificate handling (for macOS/Linux)
 certifi
-
-# Optional: For image streaming and base64 encoding
 python-multipart
-
-# Pydantic models and validation
 pydantic
-
-# Logging enhancements
 loguru
-
-# WebSockets support (if you're adding live logs or real-time updates)
-websockets
-
-# Optional: For better datetime formatting
 python-dateutil
-
-# HuggingFace Inference Client (if used)
 huggingface_hub
-
-# Optional: For frontend integration (e.g., serving static files)
 starlette
