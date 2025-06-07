@@ -1,0 +1,37 @@
+# Core FastAPI and ASGI server
+fastapi>=0.68.0,<0.70.0
+uvicorn>=0.15.0,<0.16.0
+
+# Async HTTP client
+aiohttp>=3.8.5,<3.9.0
+
+# Image processing
+Pillow>=9.0.0,<9.1.0
+base64
+
+# JSON handling
+json
+
+# SSL certificate handling (for macOS/Linux)
+certifi>=2021.10.0,<2022.0
+
+# Optional: For image streaming and base64 encoding
+python-multipart>=0.0.6,<0.0.7
+
+# Pydantic models and validation
+pydantic>=1.9.0,<1.10.0
+
+# Logging enhancements
+loguru>=0.6.0,<0.7.0
+
+# WebSockets support (if you're adding live logs or real-time updates)
+websockets>=10.0,<10.1
+
+# Optional: For better datetime formatting
+python-dateutil>=2.8.2,<2.9.0
+
+# HuggingFace Inference Client (if used)
+huggingface_hub>=0.19.0,<0.20.0
+
+# Optional: For frontend integration (e.g., serving static files)
+starlette>=0.14.2,<0.15.0
