@@ -1,70 +1,105 @@
 import streamlit as st
 import requests
 import base64
-import time
+from io import BytesIO
+from PIL import Image
 
-# API Configuration
-API_URL = "http://localhost:8000"
+# Configuration
+API_BASE_URL = "https://bannerbunny.onrender.com"
+HEADERS = {"Content-Type": "application/json"}
 
-st.set_page_config(page_title="Banner Generation UI", layout="wide")
-st.title("🎨 Banner Generation UI")
+def generate_banner(payload, async_mode=False):
+    endpoint = "/generate-banner-async" if async_mode else "/generate-banner"
+    try:
+        response = requests.post(
+            f"{API_BASE_URL}{endpoint}",
+            json=payload,
+            headers=HEADERS
+        )
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
 
-# Sidebar Navigation
-st.sidebar.header("Navigation")
-page = st.sidebar.radio("Go to", ["Generate Banner", "Check Status"])
+def poll_async_status(request_id):
+    try:
+        response = requests.get(f"{API_BASE_URL}/status/{request_id}")
+        return response.json()
+    except Exception as e:
+        return {"error": str(e)}
 
-if page == "Generate Banner":
-    st.subheader("📝 Generate Banner from Prompt")
-    prompt = st.text_area("Enter your banner description:", height=150, placeholder="e.g., 'A vibrant red banner for electronics sale'")
-    width = st.slider("Image Width", min_value=320, max_value=2048, value=1024, step=32)
-    height = st.slider("Image Height", min_value=240, max_value=1440, value=768, step=32)
-    submit_button = st.button("Generate Banner")
+def main():
+    st.title("🎨 Banner Generation UI")
+    st.caption("Powered by BannerBunny API")
 
-    if submit_button and prompt:
-        with st.spinner("Generating banner..."):
-            payload = {
-                "prompt": prompt,
-                "width": width,
-                "height": height
-            }
-            try:
-                response = requests.post(f"{API_URL}/generate-banner", json=payload)
-                result = response.json()
+    with st.sidebar:
+        st.header("Generation Parameters")
+        prompt = st.text_area("Banner Prompt", help="Describe the banner you want to generate")
+        width = st.number_input("Width", 512, 2048, 1024)
+        height = st.number_input("Height", 512, 2048, 768)
+        seed = st.number_input("Seed (optional)", min_value=0, value=None)
+        async_mode = st.checkbox("Async Processing", value=False)
+    
+    if st.button("Generate Banner"):
+        if not prompt:
+            st.error("Please enter a banner prompt")
+            return
 
-                if result["status"] == "success":
-                    st.success("✅ Banner generation successful!")
-                    st.markdown("### 🧾 Generated Metadata")
-                    st.json(result["structured_data"])
-                    st.markdown("### 🎨 FLUX Prompt")
-                    st.code(result["flux_prompt"], language="text")
-                    if result.get("image_base64"):
-                        st.markdown("### 🖼️ Generated Banner")
-                        image_data = base64.b64decode(result["image_base64"])
-                        st.image(image_data, caption="Generated Banner", use_column_width=True)
-                elif result["status"] == "partial_success":
-                    st.warning("⚠️ Metadata extracted but image generation failed.")
-                    st.json(result["structured_data"])
-                else:
-                    st.error(f"❌ Error: {result.get('error', 'Unknown error')}")
-            except Exception as e:
-                st.error(f"🚨 Failed to connect to backend: {str(e)}")
+        payload = {
+            "prompt": prompt,
+            "width": width,
+            "height": height,
+            "seed": seed or None
+        }
 
-elif page == "Check Status":
-    st.subheader("🔍 Check Async Banner Job Status")
-    request_id = st.text_input("Enter Request ID", placeholder="async_req_123456789")
-    check_button = st.button("Check Status")
+        with st.spinner("🚀 Generating banner..."):
+            result = generate_banner(payload, async_mode)
+            
+            if "error" in result:
+                st.error(f"API Error: {result['error']}")
+                return
 
-    if check_button and request_id:
-        with st.spinner("Fetching job status..."):
-            try:
-                response = requests.get(f"{API_URL}/status/{request_id}")
-                if response.status_code == 200:
-                    status = response.json()
-                    st.json(status)
-                    if status["status"] == "completed" and status["result"].get("image_base64"):
-                        image_data = base64.b64decode(status["result"]["image_base64"])
-                        st.image(image_data, caption="Generated Banner", use_column_width=True)
-                else:
-                    st.error("🚫 Job not found or server error.")
-            except Exception as e:
-                st.error(f"🚨 Connection error: {str(e)}")
+            if async_mode:
+                request_id = result.get("request_id")
+                while True:
+                    status = poll_async_status(request_id)
+                    if status.get("status") == "completed":
+                        result = status.get("result")
+                        break
+                    if status.get("status") == "failed":
+                        st.error("Async generation failed")
+                        return
+                    st.write(f"Status: {status.get('progress')}")
+                    time.sleep(2)
+
+            if result.get("image_base64"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    image_data = base64.b64decode(result["image_base64"])
+                    image = Image.open(BytesIO(image_data))
+                    st.image(image, caption="Generated Banner", use_column_width=True)
+                    
+                    # Download button
+                    buf = BytesIO()
+                    image.save(buf, format="PNG")
+                    st.download_button(
+                        label="Download Banner",
+                        data=buf.getvalue(),
+                        file_name="generated_banner.png",
+                        mime="image/png"
+                    )
+                
+                with col2:
+                    st.subheader("Generation Details")
+                    st.json({
+                        "Processing Time": f"{result.get('processing_time', 0):.2f}s",
+                        "Request ID": result.get("request_id"),
+                        "Flux Prompt": result.get("flux_prompt")
+                    })
+                    
+                    with st.expander("Structured Metadata"):
+                        st.json(result.get("structured_data", {}))
+            else:
+                st.error("Banner generation failed")
+
+if __name__ == "__main__":
+    main()
