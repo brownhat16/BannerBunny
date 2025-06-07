@@ -1,6 +1,9 @@
 # Core FastAPI and ASGI server
 fastapi>=0.68.0,<0.70.0
 uvicorn>=0.15.0,<0.16.0
+streamlit
+requests
+time
 
 # Async HTTP client
 aiohttp>=3.8.5,<3.9.0
