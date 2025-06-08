@@ -11,6 +11,7 @@ from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
+from PIL import Image  # ADDED MISSING IMPORT
 import asyncio
 import aiohttp
 import ssl
@@ -51,7 +52,6 @@ class BannerRequest(BaseModel):
     guidance_scale: float = 3.5
     seed: Optional[int] = None
 
-
 class BannerResponse(BaseModel):
     status: str
     request_id: str
@@ -61,16 +61,13 @@ class BannerResponse(BaseModel):
     processing_time: float
     error: Optional[str] = None
 
-
 class StatusResponse(BaseModel):
     status: str
     message: str
     timestamp: str
 
-
 # Global storage for async jobs
 processing_jobs = {}
-
 
 class CompleteBannerPipeline:
     def __init__(self, api_key: str):
@@ -173,7 +170,6 @@ Rules:
         }
 
         logger.info(f"Extracting metadata for prompt: {user_prompt[:100]}...")
-
         ssl_context = ssl.create_default_context(cafile=certifi.where())
 
         for attempt in range(max_retries):
@@ -214,14 +210,12 @@ Rules:
 
     def _clean_json_response(self, response: str) -> str:
         response = response.strip()
-
-        if response.startswith("```json"):
-            response = response[5:]
+        if response.startswith("```
+            response = response[7:]  # FIXED: was [5:]
         elif response.startswith("```"):
             response = response[3:]
-        if response.endswith("```"):
+        if response.endswith("```
             response = response[:-3]
-
         start_idx = response.find('{')
         end_idx = response.rfind('}')
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
@@ -230,7 +224,6 @@ Rules:
 
     def convert_to_flux_prompt(self, metadata: Dict[str, Any]) -> str:
         prompt_parts = []
-
         orientation = metadata.get("Banner layout orientation", "Horizontal").lower()
         banner_type = f"Professional {orientation} advertising banner"
         prompt_parts.append(banner_type)
@@ -366,7 +359,6 @@ Rules:
             payload["seed"] = seed
 
         logger.info(f"Generating image with FLUX.1-dev: {width}x{height}")
-
         ssl_context = ssl.create_default_context(cafile=certifi.where())
 
         try:
@@ -386,7 +378,7 @@ Rules:
                         logger.error(f"Image generation error: {result['error']}")
                         return None
                     if "data" in result and len(result["data"]) > 0:
-                        image_b64 = result["data"][0]["b64_json"]
+                        image_b64 = result["data"]["b64_json"]  # FIXED: Added  index
                         logger.info("✅ Image generation successful")
                         return image_b64
                     else:
@@ -437,11 +429,18 @@ Rules:
                 "processing_time": processing_time
             }
 
-
 # Initialize Pipeline
 API_KEY = "75a0e63016bec427f1c7b3c44aa87d3d9763621be4f24025066ecc4500c137cc"
 pipeline = CompleteBannerPipeline(API_KEY)
 
+# Helper function to validate base64 images
+def validate_base64_image(base64_string: str) -> bool:
+    try:
+        image_data = base64.b64decode(base64_string)
+        Image.open(BytesIO(image_data))
+        return True
+    except Exception:
+        return False
 
 @app.get("/", response_model=StatusResponse)
 async def root():
@@ -450,7 +449,6 @@ async def root():
         message="Banner Generation API is running",
         timestamp=datetime.now().isoformat()
     )
-
 
 @app.post("/generate-banner", response_model=BannerResponse)
 async def generate_banner(request: BannerRequest):
@@ -486,7 +484,6 @@ async def generate_banner(request: BannerRequest):
             error=str(e)
         )
 
-
 @app.post("/generate-banner-async")
 async def generate_banner_async(request: BannerRequest, background_tasks: BackgroundTasks):
     request_id = f"async_req_{int(time.time() * 1000)}"
@@ -514,7 +511,6 @@ async def generate_banner_async(request: BannerRequest, background_tasks: Backgr
         "check_status_url": f"/status/{request_id}"
     }
 
-
 @app.get("/status/{request_id}")
 async def get_job_status(request_id: str):
     if request_id not in processing_jobs:
@@ -528,29 +524,38 @@ async def get_job_status(request_id: str):
         "result": job["result"]
     }
 
-
+# FIXED IMAGE DOWNLOAD ENDPOINT - This is the main fix for your error
 @app.get("/image/{request_id}")
 async def get_generated_image(request_id: str):
     if request_id not in processing_jobs:
         raise HTTPException(status_code=404, detail="Job not found")
+    
     job = processing_jobs[request_id]
     if job["status"] != "completed" or not job["result"] or not job["result"].get("image_base64"):
         raise HTTPException(status_code=404, detail="Image not available")
+    
     try:
+        # Decode base64 image data
         image_data = base64.b64decode(job["result"]["image_base64"])
+        
+        # Validate and process image
         image = Image.open(BytesIO(image_data))
+        
+        # Convert to PNG format explicitly to ensure compatibility
         img_byte_arr = BytesIO()
-        image.save(img_byte_arr, format=image.format)
+        image.save(img_byte_arr, format='PNG')  # FIXED: Explicitly set format instead of image.format
         img_byte_arr.seek(0)
+        
+        # Return properly formatted response - FIXED: No double BytesIO wrapping
         return StreamingResponse(
-            BytesIO(img_byte_arr.getvalue()),
+            img_byte_arr,  # FIXED: Direct BytesIO object, not BytesIO(img_byte_arr.getvalue())
             media_type="image/png",
             headers={"Content-Disposition": f"attachment; filename=banner_{request_id}.png"}
         )
+        
     except Exception as e:
         logger.error(f"Error serving image {request_id}: {e}")
-        raise HTTPException(status_code=500, detail="Error processing image")
-
+        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
 
 async def process_async_banner(request_id: str, prompt: str, width: int, height: int,
                                num_inference_steps: int, guidance_scale: float, seed: Optional[int]):
@@ -578,7 +583,6 @@ async def process_async_banner(request_id: str, prompt: str, width: int, height:
             "completed_at": datetime.now().isoformat()
         })
         logger.error(f"❌ Async request {request_id} failed: {str(e)}")
-
 
 if __name__ == "__main__":
     import uvicorn
