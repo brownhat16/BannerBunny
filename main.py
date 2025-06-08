@@ -1,19 +1,22 @@
 import json
-import requests
-from typing import Dict, Any, Optional, List
 import time
 import logging
+import base64
+from io import BytesIO
+from typing import Dict, Any, Optional
+from datetime import datetime
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 import asyncio
 import aiohttp
 import ssl
 import certifi
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from datetime import datetime
-from io import BytesIO
 from PIL import Image
+import tempfile
+import os
 
 # Configure logging
 logging.basicConfig(
@@ -25,6 +28,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+
 # Pydantic Models
 class BannerRequest(BaseModel):
     prompt: str
@@ -33,6 +37,7 @@ class BannerRequest(BaseModel):
     num_inference_steps: int = 28
     guidance_scale: float = 3.5
     seed: Optional[int] = None
+    return_format: str = "json"  # "json", "image", or "both"
 
 
 class BannerResponse(BaseModel):
@@ -41,6 +46,7 @@ class BannerResponse(BaseModel):
     structured_data: Optional[Dict] = None
     flux_prompt: Optional[str] = None
     image_base64: Optional[str] = None
+    download_url: Optional[str] = None
     processing_time: float
     error: Optional[str] = None
 
@@ -51,8 +57,9 @@ class StatusResponse(BaseModel):
     timestamp: str
 
 
-# Global storage for async jobs
+# Global storage for async jobs and generated images
 processing_jobs = {}
+generated_images = {}  # Store images temporarily for download
 
 
 class CompleteBannerPipeline:
@@ -208,11 +215,8 @@ Rules:
             response = response[5:]
         elif response.startswith("```"):
             response = response[3:]
-
         if response.endswith("```"):
             response = response[:-3]
-
-        response = response.strip()
 
         start_idx = response.find('{')
         end_idx = response.rfind('}')
@@ -220,6 +224,125 @@ Rules:
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
             response = response[start_idx:end_idx + 1]
         return response
+
+    async def generate_image_async(self, prompt: str, width: int = 1024, height: int = 768,
+                                   num_inference_steps: int = 28, guidance_scale: float = 3.5,
+                                   seed: Optional[int] = None) -> Optional[str]:
+        headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json"
+        }
+        payload = {
+            "model": self.image_model,
+            "prompt": prompt,
+            "width": width,
+            "height": height,
+            "steps": num_inference_steps,
+            "n": 1,
+            "response_format": "b64_json"
+        }
+        if seed is not None:
+            payload["seed"] = seed
+
+        logger.info(f"Generating image with FLUX.1-dev: {width}x{height}")
+
+        ssl_context = ssl.create_default_context(cafile=certifi.where())
+
+        try:
+            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
+                async with session.post(
+                        self.image_generation_url,
+                        headers=headers,
+                        json=payload,
+                        timeout=aiohttp.ClientTimeout(total=120)
+                ) as response:
+                    if response.status != 200:
+                        error_text = await response.text()
+                        logger.error(f"Image generation failed {response.status}: {error_text}")
+                        return None
+                    result = await response.json()
+                    if "error" in result:
+                        logger.error(f"Image generation error: {result['error']}")
+                        return None
+                    if "data" in result and len(result["data"]) > 0:
+                        image_b64 = result["data"][0]["b64_json"]
+                        logger.info("✅ Image generation successful")
+                        return image_b64
+                    else:
+                        logger.error("No image data returned")
+                        return None
+        except Exception as e:
+            logger.error(f"Image generation failed: {e}")
+            return None
+
+    def save_image_temporarily(self, image_b64: str, request_id: str) -> str:
+        """Save image to temporary file and return file path"""
+        try:
+            # Decode base64 image
+            image_data = base64.b64decode(image_b64)
+            image = Image.open(BytesIO(image_data))
+
+            # Create temporary file
+            temp_dir = tempfile.gettempdir()
+            filename = f"banner_{request_id}.png"
+            file_path = os.path.join(temp_dir, filename)
+
+            # Save image
+            image.save(file_path, format='PNG')
+
+            # Store in global dict for cleanup
+            generated_images[request_id] = {
+                "file_path": file_path,
+                "created_at": datetime.now(),
+                "filename": filename
+            }
+
+            logger.info(f"Image saved temporarily: {file_path}")
+            return file_path
+        except Exception as e:
+            logger.error(f"Failed to save image temporarily: {e}")
+            return None
+
+    async def process_banner_request_async(self, user_prompt: str, width: int = 1024,
+                                           height: int = 768, num_inference_steps: int = 28,
+                                           guidance_scale: float = 3.5, seed: Optional[int] = None) -> Dict:
+        start_time = time.time()
+        logger.info(f"🔄 Processing banner request: {user_prompt[:100]}...")
+
+        metadata = await self.extract_metadata_async(user_prompt)
+        if not metadata:
+            return {
+                "status": "error",
+                "error": "Failed to extract metadata",
+                "processing_time": time.time() - start_time
+            }
+
+        flux_prompt = self.convert_to_flux_prompt(metadata)
+
+        image_b64 = await self.generate_image_async(
+            flux_prompt, width, height, num_inference_steps, guidance_scale, seed
+        )
+
+        processing_time = time.time() - start_time
+
+        if image_b64:
+            logger.info(f"✅ Complete pipeline successful in {processing_time:.2f}s")
+            return {
+                "status": "success",
+                "structured_data": metadata,
+                "flux_prompt": flux_prompt,
+                "image_base64": image_b64,
+                "processing_time": processing_time
+            }
+        else:
+            logger.error("❌ Image generation failed")
+            return {
+                "status": "partial_success",
+                "structured_data": metadata,
+                "flux_prompt": flux_prompt,
+                "error": "Image generation failed",
+                "processing_time": processing_time
+            }
 
     def convert_to_flux_prompt(self, metadata: Dict[str, Any]) -> str:
         prompt_parts = []
@@ -346,102 +469,10 @@ Rules:
         specs.append(f"{visual_format} banner format")
         return ", ".join(specs) if specs else ""
 
-    async def generate_image_async(self, prompt: str, width: int = 1024, height: int = 768,
-                                 num_inference_steps: int = 28, guidance_scale: float = 3.5,
-                                 seed: Optional[int] = None) -> Optional[str]:
-        headers = {
-            "Authorization": f"Bearer {self.api_key}",
-            "Content-Type": "application/json"
-        }
-        payload = {
-            "model": self.image_model,
-            "prompt": prompt,
-            "width": width,
-            "height": height,
-            "steps": num_inference_steps,
-            "n": 1,
-            "response_format": "b64_json"
-        }
-        if seed is not None:
-            payload["seed"] = seed
-
-        logger.info(f"Generating image with FLUX.1-dev: {width}x{height}")
-
-        ssl_context = ssl.create_default_context(cafile=certifi.where())
-
-        try:
-            async with aiohttp.ClientSession(connector=aiohttp.TCPConnector(ssl=ssl_context)) as session:
-                async with session.post(
-                        self.image_generation_url,
-                        headers=headers,
-                        json=payload,
-                        timeout=aiohttp.ClientTimeout(total=120)
-                ) as response:
-                    if response.status != 200:
-                        error_text = await response.text()
-                        logger.error(f"Image generation failed {response.status}: {error_text}")
-                        return None
-                    result = await response.json()
-                    if "error" in result:
-                        logger.error(f"Image generation error: {result['error']}")
-                        return None
-                    if "data" in result and len(result["data"]) > 0:
-                        image_b64 = result["data"][0]["b64_json"]
-                        logger.info("✅ Image generation successful")
-                        return image_b64
-                    else:
-                        logger.error("No image data returned")
-                        return None
-        except Exception as e:
-            logger.error(f"Image generation failed: {e}")
-            return None
-
-    async def process_banner_request_async(self, user_prompt: str, width: int = 1024,
-                                         height: int = 768, num_inference_steps: int = 28,
-                                         guidance_scale: float = 3.5, seed: Optional[int] = None) -> Dict:
-        start_time = time.time()
-        logger.info(f"🔄 Processing banner request: {user_prompt[:100]}...")
-
-        metadata = await self.extract_metadata_async(user_prompt)
-        if not metadata:
-            return {
-                "status": "error",
-                "error": "Failed to extract metadata",
-                "processing_time": time.time() - start_time
-            }
-
-        flux_prompt = self.convert_to_flux_prompt(metadata)
-
-        image_b64 = await self.generate_image_async(
-            flux_prompt, width, height, num_inference_steps, guidance_scale, seed
-        )
-
-        processing_time = time.time() - start_time
-
-        if image_b64:
-            logger.info(f"✅ Complete pipeline successful in {processing_time:.2f}s")
-            return {
-                "status": "success",
-                "structured_data": metadata,
-                "flux_prompt": flux_prompt,
-                "image_base64": image_b64,
-                "processing_time": processing_time
-            }
-        else:
-            logger.error("❌ Image generation failed")
-            return {
-                "status": "partial_success",
-                "structured_data": metadata,
-                "flux_prompt": flux_prompt,
-                "error": "Image generation failed",
-                "processing_time": processing_time
-            }
-
 
 # Initialize Pipeline
 API_KEY = "50f7427ca836843296c3ceccd2092c504ca45f20e30cb922e0c35cfb7046aeb0"
 pipeline = CompleteBannerPipeline(API_KEY)
-
 
 # FastAPI App
 app = FastAPI(
@@ -468,11 +499,19 @@ async def root():
     )
 
 
-@app.post("/generate-banner", response_model=BannerResponse)
+@app.post("/generate-banner")
 async def generate_banner(request: BannerRequest):
     request_id = f"req_{int(time.time() * 1000)}"
     start_time = time.time()
     logger.info(f"📨 Received banner request {request_id}: {request.prompt}")
+
+    # Store job immediately
+    processing_jobs[request_id] = {
+        "status": "processing",
+        "progress": "Starting...",
+        "created_at": datetime.now().isoformat(),
+        "result": None
+    }
 
     try:
         result = await pipeline.process_banner_request_async(
@@ -484,23 +523,108 @@ async def generate_banner(request: BannerRequest):
             seed=request.seed
         )
         processing_time = time.time() - start_time
-        return BannerResponse(
-            status=result["status"],
-            request_id=request_id,
-            structured_data=result.get("structured_data"),
-            flux_prompt=result.get("flux_prompt"),
-            image_base64=result.get("image_base64"),
-            processing_time=processing_time,
-            error=result.get("error")
-        )
+
+        # Update job status
+        processing_jobs[request_id].update({
+            "status": "completed" if result["status"] == "success" else "partial_success",
+            "progress": "Complete",
+            "result": result,
+            "completed_at": datetime.now().isoformat()
+        })
+
+        download_url = None
+
+        # Handle different return formats
+        if request.return_format == "image" and result.get("image_base64"):
+            # Return image directly for download
+            try:
+                image_data = base64.b64decode(result["image_base64"])
+                image = Image.open(BytesIO(image_data))
+                img_byte_arr = BytesIO()
+                image.save(img_byte_arr, format='PNG')
+                img_byte_arr.seek(0)
+
+                return StreamingResponse(
+                    img_byte_arr,
+                    media_type="image/png",
+                    headers={
+                        "Content-Disposition": f"attachment; filename=banner_{request_id}.png",
+                        "X-Request-ID": request_id
+                    }
+                )
+            except Exception as e:
+                logger.error(f"Error serving direct image download: {e}")
+                return JSONResponse(
+                    status_code=500,
+                    content={"error": f"Failed to process image for download: {str(e)}"}
+                )
+
+        # For JSON or both formats, save image temporarily and provide download URL
+        if result.get("image_base64"):
+            file_path = pipeline.save_image_temporarily(result["image_base64"], request_id)
+            if file_path:
+                download_url = f"/download/{request_id}"
+
+        # Prepare response based on format
+        response_data = {
+            "status": result["status"],
+            "request_id": request_id,
+            "processing_time": processing_time,
+            "error": result.get("error")
+        }
+
+        if request.return_format in ["json", "both"]:
+            response_data.update({
+                "structured_data": result.get("structured_data"),
+                "flux_prompt": result.get("flux_prompt"),
+                "download_url": download_url
+            })
+
+            if request.return_format == "both":
+                response_data["image_base64"] = result.get("image_base64")
+
+        return JSONResponse(content=response_data)
+
     except Exception as e:
         logger.error(f"❌ Request {request_id} failed: {str(e)}")
-        return BannerResponse(
-            status="error",
-            request_id=request_id,
-            processing_time=time.time() - start_time,
-            error=str(e)
+        processing_jobs[request_id].update({
+            "status": "failed",
+            "progress": f"Error: {str(e)}",
+            "error": str(e),
+            "completed_at": datetime.now().isoformat()
+        })
+        return JSONResponse(
+            status_code=500,
+            content={
+                "status": "error",
+                "request_id": request_id,
+                "processing_time": time.time() - start_time,
+                "error": str(e)
+            }
         )
+
+
+@app.get("/download/{request_id}")
+async def download_image(request_id: str):
+    """Direct download endpoint for generated images"""
+    if request_id not in generated_images:
+        raise HTTPException(status_code=404, detail="Image not found or expired")
+
+    image_info = generated_images[request_id]
+    file_path = image_info["file_path"]
+    filename = image_info["filename"]
+
+    if not os.path.exists(file_path):
+        # Clean up expired entry
+        del generated_images[request_id]
+        raise HTTPException(status_code=404, detail="Image file not found")
+
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type="image/png",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
 
 
 @app.post("/generate-banner-async")
@@ -527,7 +651,8 @@ async def generate_banner_async(request: BannerRequest, background_tasks: Backgr
         "request_id": request_id,
         "status": "accepted",
         "message": "Banner generation started",
-        "check_status_url": f"/status/{request_id}"
+        "check_status_url": f"/status/{request_id}",
+        "download_url": f"/download/{request_id}"  # Pre-provide download URL
     }
 
 
@@ -536,7 +661,8 @@ async def get_job_status(request_id: str):
     if request_id not in processing_jobs:
         raise HTTPException(status_code=404, detail="Job not found")
     job = processing_jobs[request_id]
-    return {
+
+    response = {
         "request_id": request_id,
         "status": job["status"],
         "progress": job["progress"],
@@ -544,32 +670,63 @@ async def get_job_status(request_id: str):
         "result": job["result"]
     }
 
+    # Add download URL if image is available
+    if job["status"] == "completed" and request_id in generated_images:
+        response["download_url"] = f"/download/{request_id}"
+
+    return response
+
 
 @app.get("/image/{request_id}")
 async def get_generated_image(request_id: str):
-    if request_id not in processing_jobs:
-        raise HTTPException(status_code=404, detail="Job not found")
-    job = processing_jobs[request_id]
-    if job["status"] != "completed" or not job["result"] or not job["result"].get("image_base64"):
-        raise HTTPException(status_code=404, detail="Image not available")
-    try:
-        image_data = base64.b64decode(job["result"]["image_base64"])
-        image = Image.open(BytesIO(image_data))
-        img_byte_arr = BytesIO()
-        image.save(img_byte_arr, format=image.format)
-        img_byte_arr.seek(0)
-        return StreamingResponse(
-            BytesIO(img_byte_arr.getvalue()),
-            media_type="image/png",
-            headers={"Content-Disposition": f"attachment; filename=banner_{request_id}.png"}
-        )
-    except Exception as e:
-        logger.error(f"Error serving image {request_id}: {e}")
-        raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
+    """Legacy endpoint - redirects to download endpoint"""
+    return await download_image(request_id)
+
+
+@app.delete("/cleanup/{request_id}")
+async def cleanup_image(request_id: str):
+    """Clean up temporary image files"""
+    if request_id in generated_images:
+        image_info = generated_images[request_id]
+        file_path = image_info["file_path"]
+
+        try:
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            del generated_images[request_id]
+            return {"message": f"Image {request_id} cleaned up successfully"}
+        except Exception as e:
+            logger.error(f"Failed to cleanup image {request_id}: {e}")
+            return {"error": f"Failed to cleanup: {str(e)}"}
+    else:
+        raise HTTPException(status_code=404, detail="Image not found")
+
+
+@app.get("/cleanup-old-images")
+async def cleanup_old_images():
+    """Clean up images older than 1 hour"""
+    current_time = datetime.now()
+    cleaned_count = 0
+
+    for request_id in list(generated_images.keys()):
+        image_info = generated_images[request_id]
+        age = current_time - image_info["created_at"]
+
+        if age.total_seconds() > 3600:  # 1 hour
+            try:
+                file_path = image_info["file_path"]
+                if os.path.exists(file_path):
+                    os.remove(file_path)
+                del generated_images[request_id]
+                cleaned_count += 1
+            except Exception as e:
+                logger.error(f"Failed to cleanup old image {request_id}: {e}")
+
+    return {"message": f"Cleaned up {cleaned_count} old images"}
 
 
 async def process_async_banner(request_id: str, prompt: str, width: int, height: int,
-                              num_inference_steps: int, guidance_scale: float, seed: Optional[int]):
+                               num_inference_steps: int, guidance_scale: float, seed: Optional[int]):
     try:
         result = await pipeline.process_banner_request_async(
             user_prompt=prompt,
@@ -579,8 +736,13 @@ async def process_async_banner(request_id: str, prompt: str, width: int, height:
             guidance_scale=guidance_scale,
             seed=seed
         )
+
+        # Save image temporarily for download
+        if result.get("image_base64"):
+            pipeline.save_image_temporarily(result["image_base64"], request_id)
+
         processing_jobs[request_id].update({
-            "status": "completed",
+            "status": "completed" if result["status"] == "success" else "partial_success",
             "progress": "Complete",
             "result": result,
             "completed_at": datetime.now().isoformat()
@@ -596,7 +758,27 @@ async def process_async_banner(request_id: str, prompt: str, width: int, height:
         logger.error(f"❌ Async request {request_id} failed: {str(e)}")
 
 
+# Startup event to schedule cleanup
+@app.on_event("startup")
+async def startup_event():
+    import asyncio
+    # Schedule cleanup every hour
+    asyncio.create_task(periodic_cleanup())
+
+
+async def periodic_cleanup():
+    """Periodic cleanup of old temporary files"""
+    while True:
+        try:
+            await asyncio.sleep(3600)  # Wait 1 hour
+            await cleanup_old_images()
+            logger.info("🧹 Periodic cleanup completed")
+        except Exception as e:
+            logger.error(f"Periodic cleanup failed: {e}")
+
+
 # Run Server
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run(app, host="0.0.0.0", port=8000)
