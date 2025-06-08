@@ -1,21 +1,19 @@
 import json
+import requests
+from typing import Dict, Any, Optional, List
 import time
 import logging
-import base64
-from io import BytesIO
-from typing import Dict, Any, Optional, List
-from datetime import datetime
-
-from fastapi import FastAPI, HTTPException, BackgroundTasks
-from fastapi.responses import JSONResponse
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field
-from PIL import Image  # ADDED MISSING IMPORT
 import asyncio
 import aiohttp
 import ssl
 import certifi
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+from datetime import datetime
+from io import BytesIO
+from PIL import Image
 
 # Configure logging
 logging.basicConfig(
@@ -27,30 +25,15 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# FastAPI App
-app = FastAPI(
-    title="Banner Generation API",
-    description="Generate advertising banners from natural language prompts",
-    version="1.0.0"
-)
-
-# CORS Middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Pydantic Models
 class BannerRequest(BaseModel):
-    prompt: str = Field(..., description="Natural language banner description")
+    prompt: str
     width: int = 1024
     height: int = 768
     num_inference_steps: int = 28
     guidance_scale: float = 3.5
     seed: Optional[int] = None
+
 
 class BannerResponse(BaseModel):
     status: str
@@ -61,20 +44,23 @@ class BannerResponse(BaseModel):
     processing_time: float
     error: Optional[str] = None
 
+
 class StatusResponse(BaseModel):
     status: str
     message: str
     timestamp: str
 
+
 # Global storage for async jobs
 processing_jobs = {}
+
 
 class CompleteBannerPipeline:
     def __init__(self, api_key: str):
         self.api_key = api_key
         self.base_url = "https://api.together.xyz/v1/chat/completions"
         self.image_generation_url = "https://api.together.xyz/v1/images/generations"
-        self.model = "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"
+        self.model = "meta-llama/Meta-Llama-3-8B-Instruct"
         self.image_model = "black-forest-labs/FLUX.1-dev"
 
         # Prompt descriptors
@@ -157,6 +143,7 @@ Rules:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+
         payload = {
             "model": self.model,
             "messages": [
@@ -170,6 +157,7 @@ Rules:
         }
 
         logger.info(f"Extracting metadata for prompt: {user_prompt[:100]}...")
+
         ssl_context = ssl.create_default_context(cafile=certifi.where())
 
         for attempt in range(max_retries):
@@ -197,9 +185,14 @@ Rules:
                             return None
                         assistant_message = result["choices"][0]["message"]["content"].strip()
                         cleaned_message = self._clean_json_response(assistant_message)
-                        metadata = json.loads(cleaned_message)
-                        logger.info("✅ Metadata extraction successful")
-                        return metadata
+
+                        try:
+                            metadata = json.loads(cleaned_message)
+                            logger.info("✅ Metadata extraction successful")
+                            return metadata
+                        except json.JSONDecodeError as e:
+                            logger.error(f"Failed to parse JSON: {e}")
+                            return None
             except Exception as e:
                 logger.error(f"Attempt {attempt + 1} failed: {e}")
                 if attempt < max_retries - 1:
@@ -210,20 +203,27 @@ Rules:
 
     def _clean_json_response(self, response: str) -> str:
         response = response.strip()
-        if response.startswith("```
-            response = response[7:]  # FIXED: was [5:]
+
+        if response.startswith("```json"):
+            response = response[5:]
         elif response.startswith("```"):
             response = response[3:]
-        if response.endswith("```
+
+        if response.endswith("```"):
             response = response[:-3]
+
+        response = response.strip()
+
         start_idx = response.find('{')
         end_idx = response.rfind('}')
+
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
             response = response[start_idx:end_idx + 1]
         return response
 
     def convert_to_flux_prompt(self, metadata: Dict[str, Any]) -> str:
         prompt_parts = []
+
         orientation = metadata.get("Banner layout orientation", "Horizontal").lower()
         banner_type = f"Professional {orientation} advertising banner"
         prompt_parts.append(banner_type)
@@ -300,16 +300,19 @@ Rules:
 
     def _build_text_description(self, metadata: Dict[str, Any]) -> str:
         text_elements = []
+
         if metadata.get("Offer text present") == "Yes":
             offer_content = metadata.get("Offer text content", "Special Offer")
             offer_size = metadata.get("Offer text size", "Medium").lower()
             offer_position = metadata.get("Offer text position", "Top Center").lower()
             text_elements.append(f"prominent {offer_size} '{offer_content}' text positioned at {offer_position}")
+
         if metadata.get("Call-to-action button present") == "Yes":
             cta_text = metadata.get("CTA text", "Shop Now")
             cta_placement = metadata.get("CTA placement", "Bottom").lower()
             cta_contrast = metadata.get("CTA contrast", "High").lower()
             text_elements.append(f"{cta_contrast} contrast '{cta_text}' button positioned at {cta_placement}")
+
         font_style = metadata.get("Font style", "Sans-serif").lower()
         if font_style:
             text_elements.append(f"using clean {font_style} typography")
@@ -317,15 +320,19 @@ Rules:
 
     def _build_environment_description(self, metadata: Dict[str, Any]) -> str:
         env_elements = []
+
         festival = metadata.get("Festival name", "")
         if festival and festival != "None":
             env_elements.append(f"with {festival} themed decorative elements")
+
         location = metadata.get("Location type", "")
         if location and location not in ["Other", "None"]:
             env_elements.append(f"set in {location.lower()} environment")
+
         background = metadata.get("Background texture", "Solid").lower()
         if background != "solid":
             env_elements.append(f"with {background} background texture")
+
         return ", ".join(env_elements) if env_elements else ""
 
     def _build_technical_specs(self, metadata: Dict[str, Any]) -> str:
@@ -340,8 +347,8 @@ Rules:
         return ", ".join(specs) if specs else ""
 
     async def generate_image_async(self, prompt: str, width: int = 1024, height: int = 768,
-                                   num_inference_steps: int = 28, guidance_scale: float = 3.5,
-                                   seed: Optional[int] = None) -> Optional[str]:
+                                 num_inference_steps: int = 28, guidance_scale: float = 3.5,
+                                 seed: Optional[int] = None) -> Optional[str]:
         headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
@@ -359,6 +366,7 @@ Rules:
             payload["seed"] = seed
 
         logger.info(f"Generating image with FLUX.1-dev: {width}x{height}")
+
         ssl_context = ssl.create_default_context(cafile=certifi.where())
 
         try:
@@ -378,7 +386,7 @@ Rules:
                         logger.error(f"Image generation error: {result['error']}")
                         return None
                     if "data" in result and len(result["data"]) > 0:
-                        image_b64 = result["data"]["b64_json"]  # FIXED: Added  index
+                        image_b64 = result["data"][0]["b64_json"]
                         logger.info("✅ Image generation successful")
                         return image_b64
                     else:
@@ -389,8 +397,8 @@ Rules:
             return None
 
     async def process_banner_request_async(self, user_prompt: str, width: int = 1024,
-                                           height: int = 768, num_inference_steps: int = 28,
-                                           guidance_scale: float = 3.5, seed: Optional[int] = None) -> Dict:
+                                         height: int = 768, num_inference_steps: int = 28,
+                                         guidance_scale: float = 3.5, seed: Optional[int] = None) -> Dict:
         start_time = time.time()
         logger.info(f"🔄 Processing banner request: {user_prompt[:100]}...")
 
@@ -429,18 +437,27 @@ Rules:
                 "processing_time": processing_time
             }
 
+
 # Initialize Pipeline
 API_KEY = "75a0e63016bec427f1c7b3c44aa87d3d9763621be4f24025066ecc4500c137cc"
 pipeline = CompleteBannerPipeline(API_KEY)
 
-# Helper function to validate base64 images
-def validate_base64_image(base64_string: str) -> bool:
-    try:
-        image_data = base64.b64decode(base64_string)
-        Image.open(BytesIO(image_data))
-        return True
-    except Exception:
-        return False
+
+# FastAPI App
+app = FastAPI(
+    title="Banner Generation API",
+    description="Generate advertising banners from natural language prompts",
+    version="1.0.0"
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
 
 @app.get("/", response_model=StatusResponse)
 async def root():
@@ -450,11 +467,13 @@ async def root():
         timestamp=datetime.now().isoformat()
     )
 
+
 @app.post("/generate-banner", response_model=BannerResponse)
 async def generate_banner(request: BannerRequest):
     request_id = f"req_{int(time.time() * 1000)}"
     start_time = time.time()
     logger.info(f"📨 Received banner request {request_id}: {request.prompt}")
+
     try:
         result = await pipeline.process_banner_request_async(
             user_prompt=request.prompt,
@@ -475,14 +494,14 @@ async def generate_banner(request: BannerRequest):
             error=result.get("error")
         )
     except Exception as e:
-        processing_time = time.time() - start_time
         logger.error(f"❌ Request {request_id} failed: {str(e)}")
         return BannerResponse(
             status="error",
             request_id=request_id,
-            processing_time=processing_time,
+            processing_time=time.time() - start_time,
             error=str(e)
         )
+
 
 @app.post("/generate-banner-async")
 async def generate_banner_async(request: BannerRequest, background_tasks: BackgroundTasks):
@@ -511,6 +530,7 @@ async def generate_banner_async(request: BannerRequest, background_tasks: Backgr
         "check_status_url": f"/status/{request_id}"
     }
 
+
 @app.get("/status/{request_id}")
 async def get_job_status(request_id: str):
     if request_id not in processing_jobs:
@@ -524,41 +544,32 @@ async def get_job_status(request_id: str):
         "result": job["result"]
     }
 
-# FIXED IMAGE DOWNLOAD ENDPOINT - This is the main fix for your error
+
 @app.get("/image/{request_id}")
 async def get_generated_image(request_id: str):
     if request_id not in processing_jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-    
     job = processing_jobs[request_id]
     if job["status"] != "completed" or not job["result"] or not job["result"].get("image_base64"):
         raise HTTPException(status_code=404, detail="Image not available")
-    
     try:
-        # Decode base64 image data
         image_data = base64.b64decode(job["result"]["image_base64"])
-        
-        # Validate and process image
         image = Image.open(BytesIO(image_data))
-        
-        # Convert to PNG format explicitly to ensure compatibility
         img_byte_arr = BytesIO()
-        image.save(img_byte_arr, format='PNG')  # FIXED: Explicitly set format instead of image.format
+        image.save(img_byte_arr, format=image.format)
         img_byte_arr.seek(0)
-        
-        # Return properly formatted response - FIXED: No double BytesIO wrapping
         return StreamingResponse(
-            img_byte_arr,  # FIXED: Direct BytesIO object, not BytesIO(img_byte_arr.getvalue())
+            BytesIO(img_byte_arr.getvalue()),
             media_type="image/png",
             headers={"Content-Disposition": f"attachment; filename=banner_{request_id}.png"}
         )
-        
     except Exception as e:
         logger.error(f"Error serving image {request_id}: {e}")
         raise HTTPException(status_code=500, detail=f"Error processing image: {str(e)}")
 
+
 async def process_async_banner(request_id: str, prompt: str, width: int, height: int,
-                               num_inference_steps: int, guidance_scale: float, seed: Optional[int]):
+                              num_inference_steps: int, guidance_scale: float, seed: Optional[int]):
     try:
         result = await pipeline.process_banner_request_async(
             user_prompt=prompt,
@@ -584,6 +595,8 @@ async def process_async_banner(request_id: str, prompt: str, width: int, height:
         })
         logger.error(f"❌ Async request {request_id} failed: {str(e)}")
 
+
+# Run Server
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
