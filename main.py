@@ -439,7 +439,7 @@ Rules:
 
 
 # Initialize Pipeline
-API_KEY = "75a0e63016bec427f1c7b3c44aa87d3d9763621be4f24025066ecc4500c137cc"
+API_KEY = "50f7427ca836843296c3ceccd2092c504ca45f20e30cb922e0c35cfb7046aeb0"
 pipeline = CompleteBannerPipeline(API_KEY)
 
 
