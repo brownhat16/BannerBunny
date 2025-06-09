@@ -5,7 +5,6 @@ import base64
 from io import BytesIO
 from typing import Dict, Any, Optional
 from datetime import datetime
-
 from fastapi import FastAPI, HTTPException, BackgroundTasks
 from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +16,8 @@ import certifi
 from PIL import Image
 import tempfile
 import os
+
+from pygments.styles.dracula import background
 
 # Configure logging
 logging.basicConfig(
@@ -77,11 +78,13 @@ class CompleteBannerPipeline:
             "Pink": "soft pink", "White": "clean white", "Black": "bold black",
             "Brown": "warm brown", "Grey": "neutral grey"
         }
+
         self.mood_descriptors = {
             "Calm": "serene and peaceful", "Energetic": "dynamic and vibrant",
             "Luxurious": "elegant and premium", "Playful": "fun and engaging",
             "Professional": "clean and corporate", "Cozy": "warm and inviting"
         }
+
         self.theme_descriptors = {
             "Modern": "contemporary and sleek", "Classic": "timeless and traditional",
             "Retro": "vintage-inspired", "Minimalist": "clean and uncluttered",
@@ -89,61 +92,92 @@ class CompleteBannerPipeline:
         }
 
     def create_system_prompt(self) -> str:
-        return """You are an AI assistant that converts user requests for advertising banners into a structured JSON format. Analyze the user's prompt and extract the relevant attributes according to the provided schema. For any attribute not mentioned in the user's prompt, use a sensible default value from the allowed options.
-You must respond with ONLY a valid JSON object that matches this exact schema based on the provided metadata table:
-{
-  "Dominant colors": "Red/Yellow/Blue/Green/Orange/Purple/Pink/White/Black/Brown/Grey",
-  "Brightness": "Light/Dark/Medium",
-  "Warm vs cool tones": "Warm/Cool/Neutral",
-  "Contrast level": "High/Medium/Low",
-  "Text-to-image ratio": "10%/30%/50%/70%/90%",
-  "Left vs right alignment": "Left/Right/Center",
-  "Symmetry": "Symmetrical/Asymmetrical",
-  "Whitespace usage": "Low/Medium/High",
-  "Image focus type": "Product/Lifestyle",
-  "Visual format": "Static/Animated",
-  "Number vs photo": "Number/Photo",
-  "Number of products shown": "1/2/3+",
-  "Number of people shown": "0/1/2/3+",
-  "Design density": "Minimal/Medium/Dense",
-  "Embedded text present": "Yes/No",
-  "Text language": "English/Hindi/Others",
-  "Font style": "Bold/Serif/Sans-serif",
-  "Festival special occasion logo": "Yes/No",
-  "Festival name": "Diwali/Holi/Christmas/Eid/New Year/Valentine/Mother's Day/Father's Day/Independence Day/Republic Day/None",
-  "Logo size": "Small/Medium/Large",
-  "Logo placement": "Top Left/Top Center/Top Right/Center Left/Center/Center Right/Bottom Left/Bottom Center/Bottom Right",
-  "Call-to-action button present": "Yes/No",
-  "CTA placement": "Top/Center/Bottom",
-  "CTA contrast": "High/Medium/Low",
-  "CTA text": "string",
-  "Objects visible": "Yes/No",
-  "Brand logo visible": "Yes/No",
-  "Brand name size": "Small/Medium/Large",
-  "Emotion (if faces shown)": "Happy/Excited/Calm/Serious/Surprised/Sad/Angry/None",
-  "Gender shown (if people shown)": "Male/Female/Mixed/None",
-  "Employment type (if shown)": "Indoor/Outdoor/None",
-  "Environment type": "Indoor/Outdoor/None",
-  "Location type": "Kitchen/Living room/Bedroom/Office/Store/Street/Park/Beach/Mountain/Other/None",
-  "Offer text present": "Yes/No",
-  "Offers": "Kitchen/Electronics/Fashion/Home/Beauty/Sports/Books/Travel/Food/Other/None",
-  "Offer text size": "Small/Medium/Large/None",
-  "Offer text position": "Top Left/Top Center/Top Right/Center Left/Center/Center Right/Bottom Left/Bottom Center/Bottom Right/None",
-  "Offer text content": "string/None",
-  "Key points / Highlights": ["string"],
-  "Elements placement logic": "Grid Layout/Freeform/Overlapping/Stacked",
-  "Person positioning (if shown)": "Front Facing/Side Profile/Group Shot/Not Applicable",
-  "Banner layout orientation": "Horizontal/Vertical/Square",
-  "Accessibility features": "High Contrast/Alt Text/Readable Fonts/None",
-  "Theme": "Modern/Classic/Retro/Minimalist/Corporate/Festive",
-  "Tone & Mood": "Energetic/Calm/Luxurious/Playful/Professional/Cozy",
-  "Brand tagline": "string/Not Applicable",
-  "Background texture": "Solid/Gradient/Pattern/Photographic/Abstract"
-}
-Rules:
-1. Respond with ONLY the JSON object, no additional text or explanations
-2. Use exact field names and values as specified above
-3. If a value is not mentioned in the prompt, choose the most appropriate default"""
+        schema = {
+            "Dominant colors": "Red/Yellow/Blue/Green/Orange/Purple/Pink/White/Black/Brown/Grey/Gold/Silver/Teal/Magenta",
+            "Secondary colors": "Red/Yellow/Blue/Green/Orange/Purple/Pink/White/Black/Brown/Grey/Gold/Silver/Teal/Magenta/None",
+            "Accent colors": "Red/Yellow/Blue/Green/Orange/Purple/Pink/White/Black/Brown/Grey/Gold/Silver/Teal/Magenta/None",
+            "Brightness": "Light/Dark/Medium",
+            "Warm vs cool tones": "Warm/Cool/Neutral",
+            "Contrast level": "High/Medium/Low",
+            "Color harmony": "Monochromatic/Analogous/Complementary/Triadic/Split-Complementary",
+            "Financial instruments": "string",
+            "Offer text present": "Yes/No",
+            "Offer text content": "string/None",
+            "Offer text size": "Small/Medium/Large/Extra Large/None",
+            "Offer Text language": "English/Hindi/Marathi/Tamil/Telugu/Bengali/Gujarati/Kannada/Malayalam/Punjabi/Others/Mixed",
+            "Offer text Font style": "Bold/Serif/Sans-serif/Script/Display/Handwritten/Monospace",
+            "Offer text Font weight": "Thin/Light/Regular/Medium/Bold/Black",
+            "Offer text position": "Top Left/Top Center/Top Right/Center Left/Center/Center Right/Bottom Left/Bottom Center/Bottom Right/Banner/Sticker/None",
+            "Offer text color": "Red/Yellow/Blue/Green/Orange/Purple/Pink/White/Black/Gold/Silver/Brand Color/High Contrast",
+            "Offer text background": "None/Solid/Gradient/Banner/Badge/Burst/Ribbon",
+            "People present": "Yes/No",
+            "No. Of people": "1/2/3/3+",
+            "Description of People": "string",
+            "Action of person" : "string",
+            "Emotion of people": "Happy/Excited/Calm/Serious/Surprised/Confident/Relaxed/Energetic/Focused/Not Applicable",
+            "Product elements": ["string"],
+            "Product element positioning": "Center/Left/Right/Top/Bottom/Scattered/Grid/Linear",
+            "Product element size emphasis": "Equal/Hero Product/Varied Sizes",
+            "Design density": "Minimal/Medium/Dense",
+            "Text-to-image ratio": "10%/30%/50%/70%/90%",
+            "Left vs right alignment": "Left/Right/Center",
+            "Symmetry": "Symmetrical/Asymmetrical",
+            "Whitespace usage": "Low/Medium/High",
+            "Headline text": "string/None",
+            "Headline position": "Top Left/Top Center/Top Right/Center Left/Center/Center Right/Bottom Left/Bottom Center/Bottom Right/Overlay/None",
+            "Headline size": "Small/Medium/Large/Extra Large",
+            "Headline color": "Red/Yellow/Blue/Green/Orange/Purple/Pink/White/Black/Brown/Grey/Gold/Silver/Brand Color/Contrast Color",
+            "Headline style": "Bold/Italic/Underlined/Shadow/Outline/Gradient/None",
+            "Subheading text": "string/None",
+            "Subheading position": "Top Left/Top Center/Top Right/Center Left/Center/Center Right/Bottom Left/Bottom Center/Bottom Right/Below Headline/None",
+            "Subheading size": "Small/Medium/Large",
+            "Subheading color": "Red/Yellow/Blue/Green/Orange/Purple/Pink/White/Black/Brown/Grey/Gold/Silver/Brand Color/Contrast Color",
+            "Festival special occasion logo": "Yes/No",
+            "Festival name": "Diwali/Holi/Christmas/Eid/New Year/Valentine/Mother's Day/Father's Day/Independence Day/Republic Day/Dussehra/Ganesh Chaturthi/Karva Chauth/Raksha Bandhan/None",
+            "Brand logo visible": "Yes/No",
+            "Logo size": "Small/Medium/Large/Extra Large",
+            "Logo placement": "Top Left/Top Center/Top Right/Center Left/Center/Center Right/Bottom Left/Bottom Center/Bottom Right/Corner/Watermark",
+            "Logo style": "Full Logo/Icon Only/Text Only/Monogram",
+            "Logo transparency": "Opaque/Semi-Transparent/Watermark",
+            "Brand tagline": "string/Not Applicable",
+            "Call-to-action button present": "Yes/No",
+            "CTA text": "string/None",
+            "CTA placement": "Top/Center/Bottom/Left/Right/Floating/Multiple Positions",
+            "CTA position detail": "Top Left/Top Center/Top Right/Center Left/Center/Center Right/Bottom Left/Bottom Center/Bottom Right/None",
+            "CTA size": "Small/Medium/Large/Full Width",
+            "CTA shape": "Rectangular/Rounded/Circular/Custom/Pill",
+            "CTA style": "Filled/Outlined/Text Only/3D/Gradient",
+            "CTA color": "Red/Yellow/Blue/Green/Orange/Purple/Pink/White/Black/Brand Color/Accent Color",
+            "CTA text color": "White/Black/Brand Color/Contrast Color",
+            "CTA contrast": "High/Medium/Low",
+            "CTA animation": "None/Hover Effect/Pulse/Glow/Bounce",
+            "Banner layout orientation": "Horizontal/Vertical/Square",
+            "Aspect ratio": "16:9/4:3/1:1/3:4/9:16/21:9/Custom",
+            "Theme": "Modern/Classic/Retro/Minimalist/Corporate/Festive/Luxury/Playful/Artistic/Tech",
+            "Tone & Mood": "Energetic/Calm/Luxurious/Playful/Professional/Cozy/Urgent/Trustworthy/Innovative/Nostalgic",
+            "Visual style": "Realistic/Illustrated/Abstract/Photographic/Graphic/Mixed",
+            "Background Scene":"string",
+            "Background texture": "Solid/Gradient/Pattern/Photographic/Abstract/Geometric/Organic",
+            "Background complexity": "Simple/Moderate/Complex",
+            "Device orientation": "Portrait/Landscape/Both/Adaptive",
+            "Language direction": "LTR/RTL/Mixed/Vertical/Not Applicable",
+        }
+
+        schema_json = json.dumps(schema, indent=2)
+
+        prompt = (
+            "You are an AI assistant that converts user requests for advertising banners into structured JSON. "
+            "Extract relevant attributes and use sensible defaults for unmentioned attributes.\n\n"
+            "Respond with ONLY a valid JSON object using this schema:\n"
+            f"{schema_json}\n\n"
+            "Rules:\n"
+            "1. Respond with ONLY the JSON object, no additional text\n"
+            "2. Use exact field names and values as specified\n"
+            "3. Choose appropriate defaults for unmentioned attributes\n"
+            "4. Set \"None\" or \"Not Applicable\" when elements are not relevant"
+        )
+
+        return prompt
 
     async def extract_metadata_async(self, user_prompt: str, max_retries: int = 3) -> Optional[Dict]:
         headers = {
@@ -157,14 +191,13 @@ Rules:
                 {"role": "system", "content": self.create_system_prompt()},
                 {"role": "user", "content": f"Convert this banner request to JSON: {user_prompt}"}
             ],
-            "max_tokens": 1500,
+            "max_tokens": 2100,
             "temperature": 0.1,
             "top_p": 0.9,
             "repetition_penalty": 1.1
         }
 
         logger.info(f"Extracting metadata for prompt: {user_prompt[:100]}...")
-
         ssl_context = ssl.create_default_context(cafile=certifi.where())
 
         for attempt in range(max_retries):
@@ -183,13 +216,16 @@ Rules:
                                 await asyncio.sleep(2 ** attempt)
                                 continue
                             return None
+
                         result = await response.json()
+
                         if "error" in result:
                             logger.error(f"API Error: {result['error']}")
                             if attempt < max_retries - 1:
                                 await asyncio.sleep(2 ** attempt)
                                 continue
                             return None
+
                         assistant_message = result["choices"][0]["message"]["content"].strip()
                         cleaned_message = self._clean_json_response(assistant_message)
 
@@ -205,25 +241,220 @@ Rules:
                 if attempt < max_retries - 1:
                     await asyncio.sleep(2 ** attempt)
                     continue
+
         logger.error("❌ All metadata extraction attempts failed")
         return None
 
     def _clean_json_response(self, response: str) -> str:
         response = response.strip()
-
         if response.startswith("```json"):
-            response = response[5:]
+            response = response[5:]  # Remove ```json prefix
         elif response.startswith("```"):
-            response = response[3:]
+            response = response[3:]  # Remove ``` prefix
+
         if response.endswith("```"):
-            response = response[:-3]
+            response = response[:-3:]  # Remove ``` suffix
 
         start_idx = response.find('{')
         end_idx = response.rfind('}')
 
         if start_idx != -1 and end_idx != -1 and end_idx > start_idx:
             response = response[start_idx:end_idx + 1]
+
         return response
+
+    def convert_to_flux_prompt(self, metadata: Dict[str, Any]) -> str:
+        prompt_parts = []
+
+        background_scene = metadata.get("Background Scene", "")
+        if background_scene and background_scene not in ["None", "none", ""]:
+            prompt_parts.append(f"Background details: '{background_scene}'")
+
+        # === 1. BANNER LAYOUT & FORMAT ===
+        orientation = metadata.get("Banner layout orientation", "Horizontal")
+        aspect_ratio = metadata.get("Aspect ratio", "16:9")
+        theme = metadata.get("Theme", "Modern")
+        mood = metadata.get("Tone & Mood", "Professional")
+        visual_style = metadata.get("Visual style", "Realistic")
+
+        prompt_parts.append(
+            f"{visual_style} advertising banner with {theme} theme and {mood.lower()} tone, "
+            f"{orientation} orientation ({aspect_ratio})"
+        )
+
+        # === 2. COLOR SCHEME ===
+        dominant_color = metadata.get("Dominant colors", "").split("/")[0]
+        secondary_colors = metadata.get("Secondary colors", "").split("/")
+        accent_colors = metadata.get("Accent colors", "").split("/")
+        brightness = metadata.get("Brightness", "Medium").lower()
+        warm_cool = metadata.get("Warm vs cool tones", "Neutral")
+        contrast_level = metadata.get("Contrast level", "Medium").lower()
+        color_harmony = metadata.get("Color harmony", "Monochromatic").lower()
+
+        if dominant_color != "None":
+            color_desc = f"vibrant {dominant_color} palette with {color_harmony} harmony, "
+            if secondary_colors:
+                color_desc += f"secondary accents in {', '.join(secondary_colors[:3])}, "
+            if accent_colors:
+                color_desc += f"accent highlights in {', '.join(accent_colors[:2])}, "
+            color_desc += f"{brightness} brightness, {contrast_level} contrast, {warm_cool} tone balance"
+            prompt_parts.append(color_desc)
+
+        # === 3. TEXT ELEMENTS ===
+        offer_text_present = metadata.get("Offer text present", "No")
+        if offer_text_present == "Yes":
+            offer_content = metadata.get("Offer text content", "Special Offer")
+            offer_position = metadata.get("Offer text position", "Top Center")
+            offer_size = metadata.get("Offer text size", "Medium")
+            offer_color = metadata.get("Offer text color", "Red")
+            offer_font_style = metadata.get("Offer text Font style", "Sans-serif")
+
+            prompt_parts.append(
+                f"Prominent {offer_size} '{offer_content}' text at {offer_position}, "
+                f"{offer_color} color, {offer_font_style} font"
+            )
+
+        # === 4. HEADLINE AND SUBHEADING ===
+        headline_text = metadata.get("Headline text", "string")
+        if headline_text not in ["string", "None"]:
+            headline_position = metadata.get("Headline position", "Top Left")
+            headline_size = metadata.get("Headline size", "Large")
+            headline_color = metadata.get("Headline color", "Brand Color")
+            headline_style = metadata.get("Headline style", "Bold")
+
+            prompt_parts.append(
+                f"{headline_size} '{headline_text}' headline at {headline_position}, "
+                f"{headline_color} color, styled as {headline_style}"
+            )
+
+        subheading_text = metadata.get("Subheading text", "string")
+        if subheading_text not in ["string", "None"]:
+            subheading_position = metadata.get("Subheading position", "Below Headline")
+            subheading_size = metadata.get("Subheading size", "Medium")
+            subheading_color = metadata.get("Subheading color", "Brand Color")
+
+            prompt_parts.append(
+                f"{subheading_size} '{subheading_text}' subheading at {subheading_position}, "
+                f"{subheading_color} color"
+            )
+
+        # === 5. PEOPLE PRESENTATION ===
+        people_present = metadata.get("People present", "No")
+        if people_present == "Yes":
+            no_of_people = metadata.get("No. Of people", "1")
+            description_of_people = metadata.get("Description of People", "")
+            emotion_of_people = metadata.get("Emotion of people", "Happy")
+            action_of_person = metadata.get("Action of person", "No")
+
+            people_desc = f"Featuring {no_of_people} person(s)"
+            if action_of_person:
+                people_desc += f" in {action_of_person}"
+
+            if description_of_people:
+                people_desc += f" described as {description_of_people}"
+            people_desc += f", displaying {emotion_of_people.lower()} emotion"
+
+            prompt_parts.append(people_desc)
+
+        # === 6. PRODUCT ELEMENTS ===
+        product_elements = metadata.get("Product elements", [])
+        if product_elements:
+            product_element_positioning = metadata.get("Product element positioning", "Center")
+            product_element_size_emphasis = metadata.get("Product element size emphasis", "Equal")
+
+            # Create a descriptive list of product elements
+            if isinstance(product_elements, list):
+                product_names = ", ".join(product_elements[:-1]) + " and " + product_elements[-1] if len(
+                    product_elements) > 1 else product_elements[0]
+            else:
+                product_names = str(product_elements)
+
+            product_desc = f"Showcasing {len(product_elements)} product(s): {product_names}, "
+            product_desc += f"{product_element_positioning} positioning, "
+            product_desc += f"{product_element_size_emphasis} sizing"
+
+            prompt_parts.append(product_desc)
+
+        # === 7. CALL TO ACTION ===
+        cta_present = metadata.get("Call-to-action button present", "No")
+        if cta_present == "Yes":
+            cta_text = metadata.get("CTA text", "Shop Now")
+            cta_position = metadata.get("CTA position detail", "Bottom Right")
+            cta_shape = metadata.get("CTA shape", "Rectangular")
+            cta_style = metadata.get("CTA style", "Filled")
+            cta_color = metadata.get("CTA color", "Brand Color")
+            cta_text_color = metadata.get("CTA text color", "White")
+
+            cta_desc = (
+                f"CTA text as '{cta_text}', at {cta_position} position, "
+                f"Prominent {cta_shape} CTA button styled as {cta_style}, "
+                f"{cta_color} background, {cta_text_color} text"
+            )
+
+            prompt_parts.append(cta_desc)
+
+            # === 11. BACKGROUND ===
+        background_texture = metadata.get("Background texture", "Solid")
+        background_complexity = metadata.get("Background complexity", "Simple")
+
+        # Base background description
+        background_desc = f"{background_complexity.lower()} {background_texture.lower()} background"
+        prompt_parts.append(background_desc)
+
+
+
+
+        # === 8. DESIGN ELEMENTS ===
+        design_density = metadata.get("Design density", "Medium")
+        whitespace_usage = metadata.get("Whitespace usage", "Medium")
+        text_image_ratio = metadata.get("Text-to-image ratio", "50%")
+        symmetry = metadata.get("Symmetry", "Symmetrical")
+
+        design_desc = f"{design_density} design density, {whitespace_usage} whitespace usage, "
+        design_desc += f"{text_image_ratio} text-to-image ratio, {symmetry} symmetry"
+
+        prompt_parts.append(design_desc)
+
+        # === 9. BRAND ELEMENTS ===
+        brand_logo_visible = metadata.get("Brand logo visible", "No")
+        if brand_logo_visible == "Yes":
+            logo_placement = metadata.get("Logo placement", "Top Left")
+            logo_size = metadata.get("Logo size", "Medium")
+
+            prompt_parts.append(f"Featuring company logo at {logo_placement}, {logo_size} size")
+
+        brand_tagline = metadata.get("Brand tagline", "string")
+        if brand_tagline not in ["string", "Not Applicable"]:
+            prompt_parts.append(f"Brand tagline: '{brand_tagline}'")
+
+        # === 10. FESTIVAL ELEMENTS ===
+        festival_logo = metadata.get("Festival special occasion logo", "No")
+        if festival_logo == "Yes":
+            festival_name = metadata.get("Festival name", "Diwali")
+            prompt_parts.append(f"Featuring {festival_name} celebration graphics")
+
+
+        # === 12. INDUSTRY SPECIFIC ===
+        industry = metadata.get("Industry specific", "E-commerce")
+        seasonal_adaptation = metadata.get("Seasonal adaptation", "None")
+
+        targeting_desc = f"Targeted toward {industry} industry"
+        if seasonal_adaptation != "None":
+            targeting_desc += f", seasonally adapted for {seasonal_adaptation}"
+
+        prompt_parts.append(targeting_desc)
+
+        # === FINAL PROMPT ASSEMBLY ===
+        quality_enhancers = [
+            "high-resolution vector-style rendering",
+            "sharp details",
+            "clean composition",
+            "professional-grade output"
+        ]
+
+        complete_prompt = ", ".join(prompt_parts + quality_enhancers)
+        logger.info(f"Generated comprehensive FLUX prompt: {complete_prompt[:150]}...")
+        return complete_prompt
 
     async def generate_image_async(self, prompt: str, width: int = 1024, height: int = 768,
                                    num_inference_steps: int = 28, guidance_scale: float = 3.5,
@@ -232,6 +463,7 @@ Rules:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json"
         }
+
         payload = {
             "model": self.image_model,
             "prompt": prompt,
@@ -241,11 +473,11 @@ Rules:
             "n": 1,
             "response_format": "b64_json"
         }
+
         if seed is not None:
             payload["seed"] = seed
 
         logger.info(f"Generating image with FLUX.1-dev: {width}x{height}")
-
         ssl_context = ssl.create_default_context(cafile=certifi.where())
 
         try:
@@ -260,10 +492,13 @@ Rules:
                         error_text = await response.text()
                         logger.error(f"Image generation failed {response.status}: {error_text}")
                         return None
+
                     result = await response.json()
+
                     if "error" in result:
                         logger.error(f"Image generation error: {result['error']}")
                         return None
+
                     if "data" in result and len(result["data"]) > 0:
                         image_b64 = result["data"][0]["b64_json"]
                         logger.info("✅ Image generation successful")
@@ -275,34 +510,6 @@ Rules:
             logger.error(f"Image generation failed: {e}")
             return None
 
-    def save_image_temporarily(self, image_b64: str, request_id: str) -> str:
-        """Save image to temporary file and return file path"""
-        try:
-            # Decode base64 image
-            image_data = base64.b64decode(image_b64)
-            image = Image.open(BytesIO(image_data))
-
-            # Create temporary file
-            temp_dir = tempfile.gettempdir()
-            filename = f"banner_{request_id}.png"
-            file_path = os.path.join(temp_dir, filename)
-
-            # Save image
-            image.save(file_path, format='PNG')
-
-            # Store in global dict for cleanup
-            generated_images[request_id] = {
-                "file_path": file_path,
-                "created_at": datetime.now(),
-                "filename": filename
-            }
-
-            logger.info(f"Image saved temporarily: {file_path}")
-            return file_path
-        except Exception as e:
-            logger.error(f"Failed to save image temporarily: {e}")
-            return None
-
     async def process_banner_request_async(self, user_prompt: str, width: int = 1024,
                                            height: int = 768, num_inference_steps: int = 28,
                                            guidance_scale: float = 3.5, seed: Optional[int] = None) -> Dict:
@@ -310,6 +517,7 @@ Rules:
         logger.info(f"🔄 Processing banner request: {user_prompt[:100]}...")
 
         metadata = await self.extract_metadata_async(user_prompt)
+
         if not metadata:
             return {
                 "status": "error",
@@ -344,130 +552,29 @@ Rules:
                 "processing_time": processing_time
             }
 
-    def convert_to_flux_prompt(self, metadata: Dict[str, Any]) -> str:
-        prompt_parts = []
-
-        orientation = metadata.get("Banner layout orientation", "Horizontal").lower()
-        banner_type = f"Professional {orientation} advertising banner"
-        prompt_parts.append(banner_type)
-
-        theme = metadata.get("Theme", "Modern")
-        mood = metadata.get("Tone & Mood", "Professional")
-        theme_desc = self.theme_descriptors.get(theme, theme.lower())
-        mood_desc = self.mood_descriptors.get(mood, mood.lower())
-        prompt_parts.append(f"with {theme_desc} design aesthetic, {mood_desc} atmosphere")
-
-        colors = metadata.get("Dominant colors", "Blue").split("/")
-        color_desc = " and ".join([self.color_descriptors.get(c.strip(), c.strip().lower()) for c in colors])
-        brightness = metadata.get("Brightness", "Medium").lower()
-        tone_temp = metadata.get("Warm vs cool tones", "Neutral").lower()
-        prompt_parts.append(f"featuring {color_desc} color palette, {brightness} brightness, {tone_temp} tones")
-
-        density = metadata.get("Design density", "Medium").lower()
-        whitespace = metadata.get("Whitespace usage", "Medium").lower()
-        alignment = metadata.get("Left vs right alignment", "Center").lower()
-        symmetry = metadata.get("Symmetry", "Symmetrical").lower()
-        placement_logic = metadata.get("Elements placement logic", "Grid Layout").lower()
-        composition_desc = f"{density} design density with {whitespace} whitespace usage, {alignment} aligned elements in {symmetry} {placement_logic}"
-        prompt_parts.append(composition_desc)
-
-        focus_type = metadata.get("Image focus type", "Product").lower()
-        num_products = metadata.get("Number of products shown", "1")
-        if focus_type == "product" and num_products != "0":
-            product_desc = self._build_product_description(metadata)
-            prompt_parts.append(product_desc)
-
-        text_elements = self._build_text_description(metadata)
-        if text_elements:
-            prompt_parts.append(text_elements)
-
-        environment = self._build_environment_description(metadata)
-        if environment:
-            prompt_parts.append(environment)
-
-        tech_specs = self._build_technical_specs(metadata)
-        if tech_specs:
-            prompt_parts.append(tech_specs)
-
-        quality_enhancers = [
-            "high-quality commercial photography",
-            "professional marketing design",
-            "clean and polished finish",
-            "sharp details and crisp edges",
-            "optimized for digital display"
-        ]
-
-        complete_prompt = ", ".join(prompt_parts + quality_enhancers)
-        logger.info(f"Generated FLUX prompt: {complete_prompt[:100]}...")
-        return complete_prompt
-
-    def _build_product_description(self, metadata: Dict[str, Any]) -> str:
-        num_products = metadata.get("Number of products shown", "1")
-        offer_category = metadata.get("Offers", "")
-        product_terms = {
-            "Electronics": "sleek electronic devices", "Fashion": "stylish clothing items",
-            "Home": "elegant home furnishings", "Beauty": "premium beauty products",
-            "Sports": "athletic equipment", "Kitchen": "modern kitchen appliances",
-            "Travel": "travel accessories", "Food": "gourmet food items"
-        }
-        if offer_category in product_terms:
-            product_desc = product_terms[offer_category]
-        else:
-            product_desc = "premium products"
-        if num_products == "1":
-            return f"showcasing one featured {product_desc}"
-        elif num_products == "2":
-            return f"displaying two {product_desc} elegantly arranged"
-        else:
-            return f"featuring multiple {product_desc} in an organized display"
-
-    def _build_text_description(self, metadata: Dict[str, Any]) -> str:
-        text_elements = []
-
-        if metadata.get("Offer text present") == "Yes":
-            offer_content = metadata.get("Offer text content", "Special Offer")
-            offer_size = metadata.get("Offer text size", "Medium").lower()
-            offer_position = metadata.get("Offer text position", "Top Center").lower()
-            text_elements.append(f"prominent {offer_size} '{offer_content}' text positioned at {offer_position}")
-
-        if metadata.get("Call-to-action button present") == "Yes":
-            cta_text = metadata.get("CTA text", "Shop Now")
-            cta_placement = metadata.get("CTA placement", "Bottom").lower()
-            cta_contrast = metadata.get("CTA contrast", "High").lower()
-            text_elements.append(f"{cta_contrast} contrast '{cta_text}' button positioned at {cta_placement}")
-
-        font_style = metadata.get("Font style", "Sans-serif").lower()
-        if font_style:
-            text_elements.append(f"using clean {font_style} typography")
-        return ", ".join(text_elements) if text_elements else ""
-
-    def _build_environment_description(self, metadata: Dict[str, Any]) -> str:
-        env_elements = []
-
-        festival = metadata.get("Festival name", "")
-        if festival and festival != "None":
-            env_elements.append(f"with {festival} themed decorative elements")
-
-        location = metadata.get("Location type", "")
-        if location and location not in ["Other", "None"]:
-            env_elements.append(f"set in {location.lower()} environment")
-
-        background = metadata.get("Background texture", "Solid").lower()
-        if background != "solid":
-            env_elements.append(f"with {background} background texture")
-
-        return ", ".join(env_elements) if env_elements else ""
-
-    def _build_technical_specs(self, metadata: Dict[str, Any]) -> str:
-        specs = []
-        contrast = metadata.get("Contrast level", "Medium").lower()
-        specs.append(f"{contrast} contrast ratio")
-        accessibility = metadata.get("Accessibility features", "")
-        if accessibility and accessibility != "None":
-            specs.append("accessible design with readable fonts")
-        visual_format = metadata.get("Visual format", "Static").lower()
-        specs.append(f"{visual_format} banner format")
-        return ", ".join(specs) if specs else ""
+    def save_image_temporarily(self, image_b64: str, request_id: str) -> str:
+        """Save image to temporary file and return file path"""
+        try:
+            # Decode base64 image
+            image_data = base64.b64decode(image_b64)
+            image = Image.open(BytesIO(image_data))
+            # Create temporary file
+            temp_dir = tempfile.gettempdir()
+            filename = f"banner_{request_id}.png"
+            file_path = os.path.join(temp_dir, filename)
+            # Save image
+            image.save(file_path, format='PNG')
+            # Store in global dict for cleanup
+            generated_images[request_id] = {
+                "file_path": file_path,
+                "created_at": datetime.now(),
+                "filename": filename
+            }
+            logger.info(f"Image saved temporarily: {file_path}")
+            return file_path
+        except Exception as e:
+            logger.error(f"Failed to save image temporarily: {e}")
+            return None
 
 
 # Initialize Pipeline
@@ -522,6 +629,7 @@ async def generate_banner(request: BannerRequest):
             guidance_scale=request.guidance_scale,
             seed=request.seed
         )
+
         processing_time = time.time() - start_time
 
         # Update job status
@@ -584,7 +692,6 @@ async def generate_banner(request: BannerRequest):
                 response_data["image_base64"] = result.get("image_base64")
 
         return JSONResponse(content=response_data)
-
     except Exception as e:
         logger.error(f"❌ Request {request_id} failed: {str(e)}")
         processing_jobs[request_id].update({
@@ -593,6 +700,7 @@ async def generate_banner(request: BannerRequest):
             "error": str(e),
             "completed_at": datetime.now().isoformat()
         })
+
         return JSONResponse(
             status_code=500,
             content={
@@ -631,12 +739,14 @@ async def download_image(request_id: str):
 async def generate_banner_async(request: BannerRequest, background_tasks: BackgroundTasks):
     request_id = f"async_req_{int(time.time() * 1000)}"
     logger.info(f"📨 Received async banner request {request_id}: {request.prompt}")
+
     processing_jobs[request_id] = {
         "status": "processing",
         "progress": "Starting...",
         "created_at": datetime.now().isoformat(),
         "result": None
     }
+
     background_tasks.add_task(
         process_async_banner,
         request_id,
@@ -647,6 +757,7 @@ async def generate_banner_async(request: BannerRequest, background_tasks: Backgr
         request.guidance_scale,
         request.seed
     )
+
     return {
         "request_id": request_id,
         "status": "accepted",
@@ -660,8 +771,8 @@ async def generate_banner_async(request: BannerRequest, background_tasks: Backgr
 async def get_job_status(request_id: str):
     if request_id not in processing_jobs:
         raise HTTPException(status_code=404, detail="Job not found")
-    job = processing_jobs[request_id]
 
+    job = processing_jobs[request_id]
     response = {
         "request_id": request_id,
         "status": job["status"],
@@ -689,7 +800,6 @@ async def cleanup_image(request_id: str):
     if request_id in generated_images:
         image_info = generated_images[request_id]
         file_path = image_info["file_path"]
-
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
@@ -747,6 +857,7 @@ async def process_async_banner(request_id: str, prompt: str, width: int, height:
             "result": result,
             "completed_at": datetime.now().isoformat()
         })
+
         logger.info(f"✅ Async request {request_id} completed successfully")
     except Exception as e:
         processing_jobs[request_id].update({
@@ -755,6 +866,7 @@ async def process_async_banner(request_id: str, prompt: str, width: int, height:
             "error": str(e),
             "completed_at": datetime.now().isoformat()
         })
+
         logger.error(f"❌ Async request {request_id} failed: {str(e)}")
 
 
