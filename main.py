@@ -191,7 +191,7 @@ class CompleteBannerPipeline:
                 {"role": "system", "content": self.create_system_prompt()},
                 {"role": "user", "content": f"Convert this banner request to JSON: {user_prompt}"}
             ],
-            "max_tokens": 2100,
+            "max_tokens": 1800,
             "temperature": 0.1,
             "top_p": 0.9,
             "repetition_penalty": 1.1
