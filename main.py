@@ -455,12 +455,13 @@ class CompleteBannerPipeline:
 
         # === FINAL PROMPT ASSEMBLY ===
         quality_enhancers = [
+            "correctly spelled text elements", 
+            "error-free typography",
             "high-resolution vector-style rendering",
             "sharp details",
             "clean composition",
-            "professional-grade output",
-            "correctly spelled text elements", 
-            "error-free typography"
+            "professional-grade output"
+            
         ]
 
         complete_prompt = ", ".join(prompt_parts + quality_enhancers)
