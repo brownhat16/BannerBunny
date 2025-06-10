@@ -168,6 +168,11 @@ class CompleteBannerPipeline:
         prompt = (
             "You are an AI assistant that converts user requests for advertising banners into structured JSON. "
             "Extract relevant attributes and use sensible defaults for unmentioned attributes.\n\n"
+            "SPELLING ACCURACY REQUIREMENTS:\n"
+            "- Ensure no spelling errors in any text fields\n"
+            "- Double-check all product names, brand names, and marketing text\n"
+            "- Use correct spelling for common advertising terms\n"
+            "- Example of correct spelling: 'Special Offer', 'Limited Time', 'Exclusive Deal'\n\n"
             "Respond with ONLY a valid JSON object using this schema:\n"
             f"{schema_json}\n\n"
             "Rules:\n"
@@ -264,7 +269,11 @@ class CompleteBannerPipeline:
         return response
 
     def convert_to_flux_prompt(self, metadata: Dict[str, Any]) -> str:
-        prompt_parts = []
+        spelling_instruction = (
+        "Generate a high-quality advertising banner with perfect spelling accuracy. "
+        "Ensure all text elements are correctly spelled. ")
+    
+        prompt_parts = [spelling_instruction]
 
         background_scene = metadata.get("Background Scene", "")
         if background_scene and background_scene not in ["None", "none", ""]:
@@ -449,7 +458,9 @@ class CompleteBannerPipeline:
             "high-resolution vector-style rendering",
             "sharp details",
             "clean composition",
-            "professional-grade output"
+            "professional-grade output",
+            "correctly spelled text elements", 
+            "error-free typography"
         ]
 
         complete_prompt = ", ".join(prompt_parts + quality_enhancers)
