@@ -69,7 +69,7 @@ class CompleteBannerPipeline:
         self.base_url = "https://api.together.xyz/v1/chat/completions"
         self.image_generation_url = "https://api.together.xyz/v1/images/generations"
         self.model = "meta-llama/Llama-3.3-70B-Instruct-Turbo-Free"
-        self.image_model = "black-forest-labs/FLUX.1-pro"
+        self.image_model = "black-forest-labs/FLUX.1-dev-lora"
 
         # Prompt descriptors
         self.color_descriptors = {
